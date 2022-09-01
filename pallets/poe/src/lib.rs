@@ -10,8 +10,10 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	pub use frame_system::pallet_prelude::*;
 	pub use frame_support::pallet_prelude::*;
+	use frame_support::{ensure, pallet_prelude::DispatchResultWithPostInfo};
+	use frame_system::ensure_signed;
+	pub use frame_system::pallet_prelude::*;
 	pub use sp_std::prelude::*;
 
 	#[pallet::pallet]
@@ -29,14 +31,14 @@ pub mod pallet {
 		_,
 		Blake2_128Concat,
 		BoundedVec<u8, T::MaxClaimLength>,
-		(T::AccountId, T::BlockNumber)
+		(T::AccountId, T::BlockNumber),
 	>;
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		ClaimCreated(T::AccountId, Vec<u8>),
-		ClaimRevoked(T::AccountId, Vec<u8>)
+		ClaimRevoked(T::AccountId, Vec<u8>),
 	}
 
 	#[pallet::error]
@@ -44,20 +46,55 @@ pub mod pallet {
 		ProofAlreadyExist,
 		ClaimTooLong,
 		ClaimNotExist,
-		NotClaimOwner
+		NotClaimOwner,
 	}
 
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-
 		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn create_claim(origin: OriginFor<T>, claim: Vec<u8>) -> DispatchResult {
+		pub fn create_claim(origin: OriginFor<T>, claim: Vec<u8>) -> DispatchResultWithPostInfo {
+			// 验证操作者签名信息
 			let sender = ensure_signed(origin)?;
+
+			// 检查凭证是否超出最大限度，
 			let bounded_claim = BoundedVec::<u8, T::MaxClaimLength>::try_from(claim.clone())
 				.map_err(|_| Error::<T>::ClaimTooLong)?;
-			Proofs::<T>::insert(&bounded_claim,(sender.clone(), frame_system::Pallet::<T>::block_number()));
+
+			// 检查便凭证是否已经存在，不存在则提示错误
+			ensure!(!Proofs::<T>::contains_key(&bounded_claim), Error::<T>::ProofAlreadyExist);
+
+			// 获取当前区块号
+			let current_block = frame_system::Pallet::<T>::block_number();
+
+			// 向链上存数据
+			Proofs::<T>::insert(&bounded_claim, (sender.clone(), current_block));
+
+			// 发布事件
 			Self::deposit_event(Event::ClaimCreated(sender, claim));
-			Ok(())
+			Ok(().into())
+		}
+
+		#[pallet::weight(10_000)]
+		pub fn revoke_claim(origin: OriginFor<T>, claim: Vec<u8>) -> DispatchResultWithPostInfo {
+			// 验证操作者权限
+			let sender = ensure_signed(origin)?;
+
+			// 检查凭证是否超出最大限度，
+			let bounded_claim = BoundedVec::<u8, T::MaxClaimLength>::try_from(claim.clone())
+				.map_err(|_| Error::<T>::ClaimTooLong)?;
+
+			//获取存证者所有,如果没有返回数据，则证明是凭证没有存储过，也就不能删除
+			let (owner, _) = Proofs::<T>::get(&bounded_claim).ok_or(Error::<T>::ClaimNotExist)?;
+
+			//校验操作者，是否是凭证的所有者
+			ensure!(owner == sender, Error::<T>::NotClaimOwner);
+
+			//删除存证项
+			Proofs::<T>::remove(&bounded_claim);
+
+			//发布事件
+			Self::deposit_event(Event::ClaimRevoked(sender, claim));
+			Ok(().into())
 		}
 	}
 }
