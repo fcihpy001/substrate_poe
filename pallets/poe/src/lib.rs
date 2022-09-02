@@ -39,6 +39,7 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		ClaimCreated(T::AccountId, Vec<u8>),
 		ClaimRevoked(T::AccountId, Vec<u8>),
+		ClaimTransfered(T::AccountId, Vec<u8>),
 	}
 
 	#[pallet::error]
@@ -95,6 +96,42 @@ pub mod pallet {
 			//发布事件
 			Self::deposit_event(Event::ClaimRevoked(sender, claim));
 			Ok(().into())
+		}
+
+		#[pallet::weight(10_000)]
+		pub fn transfer_claim(
+			origin: OriginFor<T>,
+			dest: T::AccountId,
+			claim: Vec<u8>,
+		) -> DispatchResultWithPostInfo {
+			// 验证操作者权限
+			let sender = ensure_signed(origin)?;
+			let reciver = dest;
+
+			// 检查凭证是否超出最大限度，
+			let bounded_claim = BoundedVec::<u8, T::MaxClaimLength>::try_from(claim.clone())
+				.map_err(|_| Error::<T>::ClaimTooLong)?;
+
+			//获取存证者所有,如果没有返回数据
+			let (owner, _) = Proofs::<T>::get(&bounded_claim).ok_or(Error::<T>::ClaimNotExist)?;
+
+			//校验操作者，是否是凭证的所有者
+			ensure!(owner == sender, Error::<T>::NotClaimOwner);
+
+			//删除存证项
+			Proofs::<T>::remove(&bounded_claim);
+
+			// 获取当前区块号
+			let current_block = frame_system::Pallet::<T>::block_number();
+
+			// 向链上存数据
+			Proofs::<T>::insert(&bounded_claim, (reciver.clone(), current_block));
+
+			//发布事件
+			Self::deposit_event(Event::ClaimTransfered(reciver, claim));
+
+			Ok(().into())
+			
 		}
 	}
 }
