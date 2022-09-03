@@ -22,6 +22,7 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
+		#[pallet::constant]
 		type MaxClaimLength: Get<u32>;
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 	}
